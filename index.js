@@ -7,12 +7,8 @@ const fs = require('fs');
 const AWS = require('aws-sdk');
 var mktemp = require("mktemp");
 var path = require('path');
+var pdf = require('pdf-poppler');
 var wf = require('async-waterfall');
-
-//const PDF2Pic = require("pdf2pic");
-//var PDFImage = require("pdf-image").PDFImage;
-
-var pdf2img = require('pdf2img');
 
 
 //var porta = 240;
@@ -36,7 +32,7 @@ app.get("/", function (req, res) {
     res.end(new Date().toLocaleString() + ": Serviço de pdf2img para sites iniciado na porta " + porta + "..");
 });
 
-app.post("/converter", async function (req, res) {
+app.post("/converter", function (req, res) {
 
     let region = req.body.region;
     let accesskey = req.body.accesskey;
@@ -50,6 +46,7 @@ app.post("/converter", async function (req, res) {
 
     wf([
         function (next) {
+
             //download do pdf do s3
             s3.getObject({
                 Bucket: bucket,
@@ -59,26 +56,26 @@ app.post("/converter", async function (req, res) {
                     callback(res, 's3 download [err]: ' + err);
                 }
                 next(null, data);
-            });
+             });
         },
         function (response, next) {
 
             if (!fs.existsSync("tmp")) {
                 fs.mkdirSync("tmp");
             }
+
             //criando arquivo com nome randômico
             var temp_file = mktemp.createFileSync("tmp/XXXXXXXXXX.pdf");
 
             //preenchendo arquivo random
-            fs.writeFileSync(temp_file, response.Body);
+           fs.writeFileSync(temp_file, response.Body);
 
             next(null, temp_file);
         },
         async function (filepath, next) {
 
             //montando diretório em que as imagens serão salvas
-            var filenamewithoutextension = path.basename(filepath, path.extname(filepath));
-            var dir = path.dirname(filepath) + '/' + filenamewithoutextension;
+            var dir = GetDiretorioImagens(filepath);
 
             //verificando existência
             if (!fs.existsSync(dir)) {
@@ -86,31 +83,20 @@ app.post("/converter", async function (req, res) {
             }
 
             //opções de conversão das páginas
-            // let opts = {
-            //     format: 'jpeg',
-            //     out_dir: dir,
-            //     out_prefix: 'page',
-            //     page: null
-            // };
+            let opts = {
+                format: 'jpeg',
+                out_dir: dir,
+                out_prefix: 'page',
+                page: null,
+                scale:2048
+            };
 
+            //iniciando conversão
+           var result = await convert(filepath, opts);
 
-            pdf2img.setOptions({
-                type: 'jpg',                                // png or jpg, default jpg
-                density: 600,                               // default 600
-                outputdir: dir, // output folder, default null (if null given, then it will create folder name same as file name)
-                outputname: 'page',                         // output file name, dafault null (if null given, then it will create image name same as input name)
-              });
-              
-              pdf2img.convert(filepath, function(err, info) {
-                if (err){
-                console.log(err);
-                }
-          
-
-                callback(null, dir);
-              });
-
-
+           if(result){
+            next(null, dir, filepath);
+           }
 
         },
         function (dir, filepath, next) {
@@ -135,6 +121,7 @@ app.post("/converter", async function (req, res) {
                 files.forEach((file, i) => {
 
                     try {
+
                         var keyname = filekey.replace(path.basename(filekey, path.extname(filekey)) + '.pdf', '') + file.replace('-', '_');
 
                         var dirr = dir + '/' + file;
@@ -148,7 +135,7 @@ app.post("/converter", async function (req, res) {
                             Bucket: bucket
                         };
 
-                        //salndo caminho final da imagem para o retorno
+                        //salvando caminho final da imagem para o retorno
                         lista[i] = 'https://s3.amazonaws.com/' + bucket + '/' + keyname;
 
                         //upload da imagem no s3
@@ -158,12 +145,6 @@ app.post("/converter", async function (req, res) {
                                 callback(res, '[err] ao subir ' + dirr + ': ' + err);
                             }
 
-                            //deletando arquivo imagem
-                            //fs.unlink(dirr, function (err) {
-                            //    if (err) {
-                            //        callback(null, '[err] unlink ' + dirr + ' -  err:' + err);
-                            //    }
-                            //});
                         });
                     } catch (e) {
                         callback(res, '[err] processo upload s3: ' + e + '-  arquivo: ' + dir + '/' + file);
@@ -175,22 +156,14 @@ app.post("/converter", async function (req, res) {
             });
         }
     ], function (err, result) {
+
         if (err) {
             callback(res, '[err] final do processo: ' + err);
         }
 
-
         callback(res, result.toString());
     });
-
 });
-
-
-async function converter(filepath, opts) {
-    await pdf.convert(filepath, opts);
-    return true;
-}
-
 
 function rmdir(d) {
     var self = arguments.callee;
@@ -204,7 +177,17 @@ function rmdir(d) {
     }
 }
 
+async function convert(filepath, opts){
+    await pdf.convert(filepath, opts);
+    return true;
+}
+
 function callback(res, message) {
     res.header('Content-Type', 'application/json');
     res.json(message);
+}
+
+function GetDiretorioImagens(filepath){
+    var filenamewithoutextension = path.basename(filepath, path.extname(filepath));
+    return path.dirname(filepath) + '/' + filenamewithoutextension;
 }

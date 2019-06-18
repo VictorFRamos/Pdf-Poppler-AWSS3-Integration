@@ -2,7 +2,7 @@
 var express = require("express");
 const bodyParser = require('body-parser');
 
-//pacotes
+//packages
 const fs = require('fs');
 const AWS = require('aws-sdk');
 var mktemp = require("mktemp");
@@ -11,29 +11,30 @@ var pdf = require('pdf-poppler');
 var wf = require('async-waterfall');
 
 
-//var porta = 240;
-var porta = 3000;
+//port 
+var port = 3000;
 
+//statements  ////////////////////////////////////////////////////
 var app = express();
-
-//declarações
-app.use(bodyParser.json({ limit: '1000mb', extended: true }));
-app.use(bodyParser.urlencoded({ limit: '1000mb', extended: true }))
+app.use(bodyParser.json({ limit: '100mb', extended: true }));
+app.use(bodyParser.urlencoded({ limit: '100mb', extended: true }))
 app.use(express.static("./"));
+//////////////////////////////////////////////////////////////////
 
-app.listen(porta, function () {
-    console.log(new Date().toLocaleString() + ": Serviço de pdf2img  iniciado na porta " + porta + "..");
+app.listen(port, function () {
+    console.log(new Date().toLocaleString() + ": Service de PDF Conversion  is started on " + port + "..");
 });
 
-let lista = [];
+let returnlist = [];
 
 app.get("/", function (req, res) {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end(new Date().toLocaleString() + ": Serviço de pdf2img para sites iniciado na porta " + porta + "..");
+    res.end(new Date().toLocaleString() + ": Service de PDF Conversion  is started on " + port + "..");
 });
 
 app.post("/converter", function (req, res) {
 
+    //configs
     let region = req.body.region;
     let accesskey = req.body.accesskey;
     let secretKey = req.body.secretKey;
@@ -64,25 +65,25 @@ app.post("/converter", function (req, res) {
                 fs.mkdirSync("tmp");
             }
 
-            //criando arquivo com nome randômico
+            //create random file for pdf 
             var temp_file = mktemp.createFileSync("tmp/XXXXXXXXXX.pdf");
 
-            //preenchendo arquivo random
+            //write
            fs.writeFileSync(temp_file, response.Body);
 
             next(null, temp_file);
         },
         async function (filepath, next) {
 
-            //montando diretório em que as imagens serão salvas
+            //making directory for images
             var dir = GetDiretorioImagens(filepath);
 
-            //verificando existência
+            //verify
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir);
             }
 
-            //opções de conversão das páginas
+            //options for conversion
             let opts = {
                 format: 'jpeg',
                 out_dir: dir,
@@ -91,7 +92,7 @@ app.post("/converter", function (req, res) {
                 scale:2048
             };
 
-            //iniciando conversão
+            //start..
            var result = await convert(filepath, opts);
 
            if(result){
@@ -101,14 +102,14 @@ app.post("/converter", function (req, res) {
         },
         function (dir, filepath, next) {
 
-            //deletando arquivo pdf
+            //delete pdf
             fs.unlink(filepath, function (err) {
                 if (err) {
                     callback(res, '[err] delete pdf: ' + err);
                 }
             });
 
-            //lendo imagens geradas das páginas
+            //reading images and upload to aws s3
             fs.readdir(dir, function (err, files) {
 
                 if (err) {
@@ -117,7 +118,7 @@ app.post("/converter", function (req, res) {
 
                 lista = [files.length];
 
-                //upload das páginas para o s3
+                //loop images
                 files.forEach((file, i) => {
 
                     try {
@@ -126,7 +127,7 @@ app.post("/converter", function (req, res) {
 
                         var dirr = dir + '/' + file;
 
-                        //configurando os dados para o upload
+                        //config to s3
                         let params = {
                             ACL: 'public-read',
                             Key: keyname,
@@ -135,10 +136,10 @@ app.post("/converter", function (req, res) {
                             Bucket: bucket
                         };
 
-                        //salvando caminho final da imagem para o retorno
-                        lista[i] = 'https://s3.amazonaws.com/' + bucket + '/' + keyname;
+                        //make uri for image to return after process
+                        returnlist[i] = 'https://s3.amazonaws.com/' + bucket + '/' + keyname;
 
-                        //upload da imagem no s3
+                        //upload to s3
                         s3.putObject(params, function (err, data) {
 
                             if (err) {
@@ -152,7 +153,7 @@ app.post("/converter", function (req, res) {
                 });
 
                 rmdir(dir);
-                next(null, lista);
+                next(null, returnlist);
             });
         }
     ], function (err, result) {
